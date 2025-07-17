@@ -8,13 +8,15 @@ import (
 )
 
 func (cfg *apiConfig) handlerThumbnailGet(w http.ResponseWriter, r *http.Request) {
+	const maxMemory = 10 << 20
 	videoIDString := r.PathValue("videoID")
 	videoID, err := uuid.Parse(videoIDString)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid video ID", err)
 		return
 	}
-
+	r.ParseMultipartForm(maxMemory)
+	r.FormFile("thumbnail")
 	tn, ok := videoThumbnails[videoID]
 	if !ok {
 		respondWithError(w, http.StatusNotFound, "Thumbnail not found", nil)
