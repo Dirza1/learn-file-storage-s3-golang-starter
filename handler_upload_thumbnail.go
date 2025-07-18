@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,13 +41,26 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	const maxMemory = 10 << 20
 	r.ParseMultipartForm(maxMemory)
 
-	fileData, fileHeaders, err := r.FormFile("thumbnail")
+	fileData, fileHeader, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, 401, "error during retrieval of data from thubnail", err)
 		return
 	}
-	contentType := fileHeaders.Header.Get("Content-Type")
+	contentType, _, err := mime.ParseMediaType(fileHeader.Header.Get("Content-Type"))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error revrieving data", err)
+		return
+	}
+	switch contentType {
+	case "image/jpeg":
+		fallthrough
+	case "image/png":
+		break
+	default:
+		respondWithError(w, http.StatusBadRequest, "wrong filetupe uploded", err)
+		return
 
+	}
 	immageData, err := io.ReadAll(fileData)
 	if err != nil {
 		respondWithError(w, 401, "error during parsing of file data to []byte", err)
@@ -58,22 +74,30 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	if videoMetadata.UserID != userID {
 		respondWithError(w, http.StatusUnauthorized, "unauthorised user", err)
 	}
+	var slice [32]byte
+	_, err = rand.Read(slice[:])
+	if err != nil {
+		respondWithError(w, http.DefaultMaxHeaderBytes, "error creating byte slice", err)
+		return
+	}
+	sliceString := base64.RawURLEncoding.EncodeToString(slice[:])
 	rootString := cfg.assetsRoot
 	fileExtention := strings.Split(contentType, "/")
-	secondPartUrl := fmt.Sprintf("%s.%s", videoIDString, fileExtention[1])
+	secondPartUrl := fmt.Sprintf("%s.%s", sliceString, fileExtention[1])
 	filePathThumbNail := filepath.Join(rootString, secondPartUrl)
 	file, err := os.Create(filePathThumbNail)
 	if err != nil {
 		respondWithError(w, http.StatusExpectationFailed, "error creating the new file", err)
 		return
 	}
+	defer file.Close()
 	sourceReader := bytes.NewReader(immageData)
 	_, err = io.Copy(file, sourceReader)
 	if err != nil {
 		respondWithError(w, http.StatusExpectationFailed, "error copying to the new file", err)
 		return
 	}
-	dataURL := fmt.Sprintf("http://localhost:%d/assets/%s.%s", 8091, videoIDString, fileExtention[1])
+	dataURL := fmt.Sprintf("http://localhost:%d/assets/%s", 8091, secondPartUrl)
 	videoMetadata.ThumbnailURL = &dataURL
 
 	err = cfg.db.UpdateVideo(videoMetadata)

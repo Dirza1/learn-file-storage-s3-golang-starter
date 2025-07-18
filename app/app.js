@@ -257,6 +257,7 @@ function viewVideo(video) {
   document.getElementById('video-description-display').textContent = video.description;
 
   const thumbnailImg = document.getElementById('thumbnail-image');
+  
   if (!video.thumbnail_url) {
     thumbnailImg.style.display = 'none';
   } else {
