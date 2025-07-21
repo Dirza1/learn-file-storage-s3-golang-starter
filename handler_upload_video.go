@@ -1,8 +1,15 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"mime"
 	"net/http"
+	"os"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 )
@@ -43,7 +50,62 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 	r.ParseMultipartForm(1 << 30)
 
-	videoFile, videoHeader, err := r.FormFile("video")
+	videoFile, _, err := r.FormFile("video")
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error getting video metadata", err)
+		return
+	}
 	defer videoFile.Close()
 
+	videoType, _, err := mime.ParseMediaType("video/mp4")
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "wrong media type", err)
+		return
+	}
+
+	tempFile, err := os.CreateTemp("", "tubely-upload.mp4")
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error during temp file creation", err)
+		return
+	}
+	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
+
+	io.Copy(tempFile, videoFile)
+
+	_, err = tempFile.Seek(0, io.SeekStart)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error during reset of ofset", err)
+		return
+	}
+
+	bucket := cfg.s3Bucket
+	key := make([]byte, 32)
+	_, err = rand.Read(key)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error during key generation", err)
+		return
+	}
+	hexKey := hex.EncodeToString(key)
+	s3Key := fmt.Sprintf("%s.mp4", hexKey)
+
+	objImput := s3.PutObjectInput{
+		Bucket:      &bucket,
+		Key:         &s3Key,
+		Body:        tempFile,
+		ContentType: &videoType,
+	}
+
+	_, err = cfg.s3Client.PutObject(r.Context(), &objImput)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error during video storage", err)
+		return
+	}
+	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket, cfg.s3Region, s3Key)
+	videoMeta.VideoURL = &videoURL
+	err = cfg.db.UpdateVideo(videoMeta)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error during video update in database", err)
+		return
+	}
 }
