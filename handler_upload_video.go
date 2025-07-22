@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -108,4 +112,31 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusUnauthorized, "error during video update in database", err)
 		return
 	}
+}
+
+func GetVideoAspectRatio(filePath string) (string, error) {
+
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	var buffer bytes.Buffer
+	cmd.Stdout = &buffer
+	err := cmd.Run()
+	if err != nil {
+		log.Fatalf("error running ffprobe command: %s", err)
+	}
+
+	type StreamInfo struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	}
+
+	type FFProbeOutput struct {
+		Streams []StreamInfo `json:"streams"`
+	}
+	data := FFProbeOutput{}
+	err = json.Unmarshal(buffer.Bytes(), &data)
+	if err != nil {
+		log.Fatalf("error creating json struct: %s", err)
+	}
+
+	return "", nil
 }
