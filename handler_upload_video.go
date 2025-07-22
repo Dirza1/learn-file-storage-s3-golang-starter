@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -83,6 +82,12 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	aspectRatio, err := GetVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error during aspect ration gathering", err)
+		return
+	}
+
 	bucket := cfg.s3Bucket
 	key := make([]byte, 32)
 	_, err = rand.Read(key)
@@ -91,7 +96,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	hexKey := hex.EncodeToString(key)
-	s3Key := fmt.Sprintf("%s.mp4", hexKey)
+	s3Key := fmt.Sprintf("%s/%s.mp4", aspectRatio, hexKey)
 
 	objImput := s3.PutObjectInput{
 		Bucket:      &bucket,
@@ -121,7 +126,7 @@ func GetVideoAspectRatio(filePath string) (string, error) {
 	cmd.Stdout = &buffer
 	err := cmd.Run()
 	if err != nil {
-		log.Fatalf("error running ffprobe command: %s", err)
+		return "", err
 	}
 
 	type StreamInfo struct {
@@ -135,8 +140,17 @@ func GetVideoAspectRatio(filePath string) (string, error) {
 	data := FFProbeOutput{}
 	err = json.Unmarshal(buffer.Bytes(), &data)
 	if err != nil {
-		log.Fatalf("error creating json struct: %s", err)
+		return "", err
 	}
 
-	return "", nil
+	var aspectRatio string
+	if data.Streams[0].Height/9 == data.Streams[0].Width/16 {
+		aspectRatio = "landscape"
+	} else if data.Streams[0].Height/16 == data.Streams[0].Width/9 {
+		aspectRatio = "portrait"
+	} else {
+		aspectRatio = "other"
+	}
+
+	return aspectRatio, nil
 }
