@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -11,9 +12,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -121,13 +125,20 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusUnauthorized, "error during video storage", err)
 		return
 	}
-	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket, cfg.s3Region, s3Key)
+	videoURL := fmt.Sprintf("%s,%s", bucket, s3Key)
 	videoMeta.VideoURL = &videoURL
 	err = cfg.db.UpdateVideo(videoMeta)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "error during video update in database", err)
 		return
 	}
+
+	videoMeta, err = cfg.dbVideoToSignedVideo(videoMeta)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error generating new URL", err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, videoMeta)
 }
 
 func GetVideoAspectRatio(filePath string) (string, error) {
@@ -174,4 +185,31 @@ func processVideoForFastStart(filePath string) (string, error) {
 		return "", err
 	}
 	return outputFilepath, nil
+}
+
+func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+	options := s3.GetObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+	}
+
+	s3_Client := s3.NewPresignClient(s3Client)
+	v43client, err := s3_Client.PresignGetObject(context.Background(), &options, s3.WithPresignExpires(expireTime))
+	if err != nil {
+		return "", err
+	}
+	return v43client.URL, nil
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	if video.VideoURL == nil {
+		return video, nil
+	}
+	bucketKey := strings.Split(*video.VideoURL, ",")
+	newURL, err := generatePresignedURL(cfg.s3Client, bucketKey[0], bucketKey[1], (5 * time.Minute))
+	if err != nil {
+		return database.Video{}, err
+	}
+	video.VideoURL = &newURL
+	return video, nil
 }
