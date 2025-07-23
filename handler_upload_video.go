@@ -87,6 +87,17 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusUnauthorized, "error during aspect ration gathering", err)
 		return
 	}
+	processedVideo, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error during video processing", err)
+		return
+	}
+	processedFile, err := os.Open(processedVideo)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error during opening processed file", err)
+		return
+	}
+	defer os.Remove(processedVideo)
 
 	bucket := cfg.s3Bucket
 	key := make([]byte, 32)
@@ -101,7 +112,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	objImput := s3.PutObjectInput{
 		Bucket:      &bucket,
 		Key:         &s3Key,
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: &videoType,
 	}
 
@@ -153,4 +164,14 @@ func GetVideoAspectRatio(filePath string) (string, error) {
 	}
 
 	return aspectRatio, nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	outputFilepath := filePath + ".processing"
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", outputFilepath)
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+	return outputFilepath, nil
 }
